@@ -1,0 +1,14 @@
+prefix=/home/tlinux/media/ffmpeg2/ffmpeg-4.0.1/../build
+exec_prefix=${prefix}
+libdir=/home/tlinux/media/ffmpeg2/ffmpeg-4.0.1/../build/lib
+includedir=/home/tlinux/media/ffmpeg2/ffmpeg-4.0.1/../build/include
+
+Name: libavutil
+Description: FFmpeg utility library
+Version: 56.14.100
+Requires: 
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lavutil -pthread -lm
+Libs.private: 
+Cflags: -I${includedir}

@@ -1,0 +1,14 @@
+prefix=/home/tlinux/media/ffmpeg2/ffmpeg-4.0.1/../build
+exec_prefix=${prefix}
+libdir=/home/tlinux/media/ffmpeg2/ffmpeg-4.0.1/../build/lib
+includedir=/home/tlinux/media/ffmpeg2/ffmpeg-4.0.1/../build/include
+
+Name: libpostproc
+Description: FFmpeg postprocessing library
+Version: 55.1.100
+Requires: libavutil >= 56.14.100
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lpostproc -lm
+Libs.private: 
+Cflags: -I${includedir}
