@@ -4,23 +4,30 @@
 
 #include "Mp3Decoder.h"
 #include <sys/stat.h>
-#include <libavutil/timestamp.h>
+#include "log.h"
 
+
+Mp3Decoder::Mp3Decoder(const char *filePath,
+                       void (*callback)(const void *, ssize_t, ssize_t, const void*) ) {
+    int len = strlen(filePath);
+    src_filename = new char[sizeof(char)*(len+100)];
+    snprintf(src_filename,len+100,"%s",filePath);
+    putBuffer = callback;
+}
 
 Mp3Decoder::Mp3Decoder(const char *filePath) {
     int len = strlen(filePath);
-    src_filename = new char[sizeof(char)*(len+1)];
-    snprintf(src_filename,len,filePath);
-    src_filename[len]='\0';
+    src_filename = new char[sizeof(char)*(len+100)];
+    snprintf(src_filename,len+100,"%s",filePath);
 }
 
 int Mp3Decoder::checkFileOk() {
     struct stat buf;
     int ret = stat(src_filename, &buf);
     if (buf.st_mode |S_IFMT) {
-        ret =1;
+        return ret;
     }
-    return ret;
+    return -1;
 }
 
 Mp3Decoder::~Mp3Decoder() {
@@ -32,26 +39,35 @@ Mp3Decoder::~Mp3Decoder() {
         delete  errMsg;
         errMsg = NULL;
     }
+
+    if (putBufferData) {
+        delete putBufferData;
+        putBufferData = NULL;
+    }
 }
 
 void Mp3Decoder::setErrorMsg(const char *msg, ...) {
     if (!errMsg) {
         errMsg = new char[256];
     }
-    va_list ap;
-    int size = snprintf(errMsg,255,msg,ap);
-    errMsg[size] = '\0';
+//    va_list ap;
+//    int size = snprintf(errMsg,255,msg,ap);
+//    errMsg[size] = '\0';
 }
 
 int Mp3Decoder::start() {
     int ret =0, got_frame;
+    AVFrame *frame = NULL;
+    AVPacket pkt;
 
-    if(avformat_open_input(&fmt_ctx,src_filename,NULL,NULL)){
+    //1 打开文件获取fmt_ctx(用于解封装)
+    if(avformat_open_input(&fmt_ctx,src_filename,NULL,NULL)<0){
         fprintf(stderr, "Could not open source file %s\n", src_filename);
         setErrorMsg("Could not open source file %s\n", src_filename);
         return -1;
     }
 
+    // 找一下stream
     if (avformat_find_stream_info(fmt_ctx,NULL)<0) {
         fprintf(stderr, "Could not find stream information\n");
         setErrorMsg( "Could not find stream information\n");
@@ -59,6 +75,7 @@ int Mp3Decoder::start() {
         goto close_fmt;
     }
 
+    //找到audio stream 并且获取相应的codec(解码)
     if(open_codec_context(&audio_stream_idx,&audio_dec_ctx,fmt_ctx,AVMEDIA_TYPE_AUDIO)>=0) {
         audio_stream = fmt_ctx->streams[audio_stream_idx];
     } else {
@@ -70,7 +87,7 @@ int Mp3Decoder::start() {
 
     av_dump_format(fmt_ctx,0,src_filename,0);
 
-    AVFrame *frame = av_frame_alloc();
+    frame = av_frame_alloc();
     if (!frame) {
         fprintf(stderr, "Could not allocate frame\n");
         setErrorMsg("Could not allocate frame\n");
@@ -78,8 +95,6 @@ int Mp3Decoder::start() {
         goto end;
     }
 
-
-    AVPacket pkt;
     av_init_packet(&pkt);
     pkt.data = NULL;
     pkt.size = 0;
@@ -88,8 +103,10 @@ int Mp3Decoder::start() {
         AVPacket orig_pkt = pkt;
         do {
             ret = decode_packet(&pkt,frame,&got_frame,0);
+            pkt.data += ret;
+            pkt.size -= ret;
         } while (pkt.size>0);
-        av_packet_unref(&pkt);
+        av_packet_unref(&orig_pkt);
     }
 
     pkt.data = NULL;
@@ -117,7 +134,7 @@ int Mp3Decoder::open_codec_context(int *stream_idx, AVCodecContext **dec_ctx,
     //find the stream
     ret = av_find_best_stream(fmt_ctx,type,-1,-1,NULL,0);
     if (ret<0) {
-        fprintf(stderr, "Could not find %s stream in input file '%s'\n",
+        ALOGE( "Could not find %s stream in input file '%s'\n",
                 av_get_media_type_string(type), src_filename);
         setErrorMsg("Could not find %s stream in input file '%s'\n",
                     av_get_media_type_string(type), src_filename);
@@ -129,7 +146,7 @@ int Mp3Decoder::open_codec_context(int *stream_idx, AVCodecContext **dec_ctx,
         /* find decoder for the stream */
         dec = avcodec_find_decoder(st->codecpar->codec_id);
         if (!dec) {
-            fprintf(stderr, "Failed to find %s codec\n",
+            ALOGE( "Failed to find %s codec\n",
                     av_get_media_type_string(type));
             setErrorMsg("Failed to find %s codec\n",
                         av_get_media_type_string(type));
@@ -139,15 +156,15 @@ int Mp3Decoder::open_codec_context(int *stream_idx, AVCodecContext **dec_ctx,
 
         *dec_ctx = avcodec_alloc_context3(dec);
         if (!*dec_ctx) { // alloc falis
-            fprintf(stderr, "Failed to allocate the %s codec context\n",
+            ALOGE( "Failed to allocate the %s codec context\n",
                     av_get_media_type_string(type));
             setErrorMsg( "Failed to allocate the %s codec context\n",
                          av_get_media_type_string(type));
             return AVERROR(ENOMEM);
         }
 
-        if ((ret = avcodec_parameters_to_context(*dec_ctx,st->codecpar))){
-            fprintf(stderr, "Failed to copy %s codec parameters to decoder context\n",
+        if ((ret = avcodec_parameters_to_context(*dec_ctx,st->codecpar))<0){
+            ALOGE( "Failed to copy %s codec parameters to decoder context\n",
                     av_get_media_type_string(type));
             setErrorMsg("Failed to copy %s codec parameters to decoder context\n",
                         av_get_media_type_string(type));
@@ -156,8 +173,8 @@ int Mp3Decoder::open_codec_context(int *stream_idx, AVCodecContext **dec_ctx,
 
         /* Init the decoders, with or without reference counting */
         av_dict_set(&ops,"refcounted_frames","0",0);
-        if (ret = avcodec_open2(*dec_ctx,dec,&ops)<0){
-            fprintf(stderr, "Failed to open %s codec\n",
+        if ((ret = avcodec_open2(*dec_ctx,dec,&ops))<0){
+            ALOGE( "Failed to open %s codec\n",
                     av_get_media_type_string(type));
             setErrorMsg("Failed to open %s codec\n",
                         av_get_media_type_string(type));
@@ -170,15 +187,20 @@ int Mp3Decoder::open_codec_context(int *stream_idx, AVCodecContext **dec_ctx,
 }
 
 
-int Mp3Decoder::decode_packet(AVPacket *pkt,AVFrame *frame,int *got_frame, int cached) {
+int Mp3Decoder::decode_packet(AVPacket *pPkt,AVFrame *frame,int *got_frame, int cached) {
     int ret =0;
-    int decoded = pkt->size;
+    int decoded = pPkt->size;
+
+    if (pPkt->stream_index!=audio_stream_idx) {
+        pPkt->size = 0;
+        return ret;
+    }
 
     *got_frame = 0;
 
-    ret = avcodec_decode_audio4(audio_dec_ctx,frame,got_frame,pkt);
+    ret = avcodec_decode_audio4(audio_dec_ctx,frame,got_frame,pPkt);
     if (ret<0){
-        fprintf(stderr, "Error decoding audio frame (%s)\n", av_err2str(ret));
+        ALOGE("Error decoding audio frame (%s)\n", av_err2str(ret));
         setErrorMsg("Error decoding audio frame (%s)\n", av_err2str(ret));
         return ret;
     }
@@ -186,12 +208,12 @@ int Mp3Decoder::decode_packet(AVPacket *pkt,AVFrame *frame,int *got_frame, int c
       * called again with the remainder of the packet data.
       * Sample: fate-suite/lossless-audio/luckynight-partial.shn
       * Also, some decoders might over-read the packet. */
-    decoded = FFMIN(ret,pkt->size);
+    decoded = FFMIN(ret,pPkt->size);
 
     if (*got_frame) {
         size_t unpadded_linesize = frame->nb_samples * av_get_bytes_per_sample(
                 (AVSampleFormat) frame->format);
-        printf("audio_frame%s n:%d nb_samples:%d pts:%s\n",
+        ALOGD("audio_frame%s n:%d nb_samples:%d pts:%s\n",
                cached ? "(cached)" : "",
                audio_frame_count++, frame->nb_samples,
                av_ts2timestr(frame->pts, &audio_dec_ctx->time_base));
@@ -205,12 +227,14 @@ int Mp3Decoder::decode_packet(AVPacket *pkt,AVFrame *frame,int *got_frame, int c
          * You should use libswresample or libavfilter to convert the frame
          * to packed data. */
 //        fwrite(frame->extended_data[0], 1, unpadded_linesize, audio_dst_file);
-
+        if (putBuffer) {
+            putBuffer(frame->extended_data[0],1,unpadded_linesize,putBufferData);
+        }
     }
 
     /* If we use frame reference counting, we own the data and need
     * to de-reference it when we don't use it anymore */
-    if (*got_frame && 0)
+    if (*got_frame & 0)
         av_frame_unref(frame);
 
     return decoded;

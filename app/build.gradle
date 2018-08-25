@@ -3,6 +3,11 @@ apply plugin: 'com.android.application'
 android {
     compileSdkVersion 26
     buildToolsVersion "26.0.0"
+
+    lintOptions {
+        abortOnError false
+    }
+
     defaultConfig {
         applicationId "com.tlinux.mp3playffmpegandaudiotrack"
         minSdkVersion 19
@@ -12,7 +17,8 @@ android {
         testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
-                cppFlags "-frtti"
+                cppFlags "-frtti -D__STDC_FORMAT_MACROS -O0"
+                abiFilters "armeabi"
             }
         }
     }
