@@ -60,31 +60,6 @@ int Mp3Decoder::start() {
     AVFrame *frame = NULL;
     AVPacket pkt;
 
-    //1 打开文件获取fmt_ctx(用于解封装)
-    if(avformat_open_input(&fmt_ctx,src_filename,NULL,NULL)<0){
-        fprintf(stderr, "Could not open source file %s\n", src_filename);
-        setErrorMsg("Could not open source file %s\n", src_filename);
-        return -1;
-    }
-
-    // 找一下stream
-    if (avformat_find_stream_info(fmt_ctx,NULL)<0) {
-        fprintf(stderr, "Could not find stream information\n");
-        setErrorMsg( "Could not find stream information\n");
-        ret = -1;
-        goto close_fmt;
-    }
-
-    //找到audio stream 并且获取相应的codec(解码)
-    if(open_codec_context(&audio_stream_idx,&audio_dec_ctx,fmt_ctx,AVMEDIA_TYPE_AUDIO)>=0) {
-        audio_stream = fmt_ctx->streams[audio_stream_idx];
-    } else {
-        fprintf(stderr, "Could not find stream information\n");
-        setErrorMsg( "Could not find stream information\n");
-        ret = -1;
-        goto close_fmt;
-    }
-
     av_dump_format(fmt_ctx,0,src_filename,0);
 
     frame = av_frame_alloc();
@@ -118,10 +93,6 @@ int Mp3Decoder::start() {
 end:
     av_frame_free(&frame);
     avcodec_free_context(&audio_dec_ctx);
-
-close_fmt:
-    avformat_close_input(&fmt_ctx);
-    return ret;
 }
 
 int Mp3Decoder::open_codec_context(int *stream_idx, AVCodecContext **dec_ctx,
@@ -228,6 +199,7 @@ int Mp3Decoder::decode_packet(AVPacket *pPkt,AVFrame *frame,int *got_frame, int 
          * to packed data. */
 //        fwrite(frame->extended_data[0], 1, unpadded_linesize, audio_dst_file);
         if (putBuffer) {
+            ALOGE("data size %s",frame->extended_data);
             putBuffer(frame->extended_data[0],1,unpadded_linesize,putBufferData);
         }
     }
@@ -238,4 +210,89 @@ int Mp3Decoder::decode_packet(AVPacket *pPkt,AVFrame *frame,int *got_frame, int 
         av_frame_unref(frame);
 
     return decoded;
+}
+
+int Mp3Decoder::prepare() {
+    int ret=0;
+    //1 打开文件获取fmt_ctx(用于解封装)
+    if(avformat_open_input(&fmt_ctx,src_filename,NULL,NULL)<0){
+        fprintf(stderr, "Could not open source file %s\n", src_filename);
+        setErrorMsg("Could not open source file %s\n", src_filename);
+        return -1;
+    }
+
+    // 找一下stream
+    if (avformat_find_stream_info(fmt_ctx,NULL)<0) {
+        fprintf(stderr, "Could not find stream information\n");
+        setErrorMsg( "Could not find stream information\n");
+        ret = -1;
+        goto close_fmt;
+    }
+
+    //找到audio stream 并且获取相应的codec(解码)
+    if(open_codec_context(&audio_stream_idx,&audio_dec_ctx,fmt_ctx,AVMEDIA_TYPE_AUDIO)>=0) {
+        audio_stream = fmt_ctx->streams[audio_stream_idx];
+    } else {
+        fprintf(stderr, "Could not find stream information\n");
+        setErrorMsg( "Could not find stream information\n");
+        ret = -1;
+        goto close_fmt;
+    }
+
+    if (audio_stream) {
+        enum AVSampleFormat sfmt = audio_dec_ctx->sample_fmt;
+        n_channels = audio_dec_ctx->channels;
+        sample_rate = audio_dec_ctx->sample_rate;
+
+        if (av_sample_fmt_is_planar(sfmt)) {
+            const char *packed = av_get_sample_fmt_name(sfmt);
+            ALOGW("Warning: the sample format the decoder produced is planar "
+                           "(%s). This example will output the first channel only.\n",
+                   packed ? packed : "?");
+            sfmt = av_get_packed_sample_fmt(sfmt);
+            n_channels = 1;
+        }
+
+        if ((ret = get_format_from_sample_fmt(&fmt, sfmt)) < 0)
+            goto close_fmt;
+        else {
+            goto end;
+        }
+    } else {
+        ret = -2;
+    }
+
+close_fmt:
+    avformat_close_input(&fmt_ctx);
+
+end:
+    return ret;
+}
+
+
+int Mp3Decoder::get_format_from_sample_fmt(const char **fmt,
+                                      enum AVSampleFormat sample_fmt) {
+    int i;
+    struct sample_fmt_entry {
+        enum AVSampleFormat sample_fmt;
+        const char *fmt_be, *fmt_le;
+    } sample_fmt_entries[] = {
+            {AV_SAMPLE_FMT_U8,  "u8",    "u8"},
+            {AV_SAMPLE_FMT_S16, "s16be", "s16le"},
+            {AV_SAMPLE_FMT_S32, "s32be", "s32le"},
+            {AV_SAMPLE_FMT_FLT, "f32be", "f32le"},
+            {AV_SAMPLE_FMT_DBL, "f64be", "f64le"},
+    };
+    *fmt = NULL;
+
+    for (i = 0; i < FF_ARRAY_ELEMS(sample_fmt_entries); i++) {
+        struct sample_fmt_entry *entry = &sample_fmt_entries[i];
+        if (sample_fmt == entry->sample_fmt) {
+            *fmt = AV_NE(entry->fmt_be, entry->fmt_le);
+            return 0;
+        }
+    }
+    ALOGE("sample format %s is not supported as output format\n",
+            av_get_sample_fmt_name(sample_fmt));
+    return -1;
 }

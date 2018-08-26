@@ -15,15 +15,15 @@ extern "C"
 JNIEXPORT jlong JNICALL
 Java_com_tlinux_mp3playffmpegandaudiotrack_Mp3Decoder_onData(JNIEnv *env, jobject instance,
                                                                  jstring path_) {
-
 }
 
 static void callback(const void *buffer, ssize_t size, ssize_t count,const void *data){
     const CallBackData *pData = (const CallBackData *) data;
     JNIEnv *env = pData->env;
     jbyteArray  jbarray = env->NewByteArray(size*count);
-    env->SetByteArrayRegion(jbarray, 0, 2, (const jbyte *) buffer);
+    env->SetByteArrayRegion(jbarray, 0, size*count, (const jbyte *) buffer);
     pData->env->CallVoidMethod(pData->instance,METHID_ON_DATA,jbarray,size,count);
+    env->DeleteLocalRef(jbarray);
 }
 
 
@@ -35,18 +35,10 @@ static inline Mp3Decoder*  getNativeMp3Decoder(JNIEnv *env, jobject instance){
 extern "C"
 JNIEXPORT jlong JNICALL
 Java_com_tlinux_mp3playffmpegandaudiotrack_Mp3Decoder_nativeInit(JNIEnv *env, jobject instance,
-                                                                 jstring path_,jboolean useCallBack) {
+                                                                 jstring path_) {
     const char *path = env->GetStringUTFChars(path_, 0);
 
     Mp3Decoder *mp3Decoder = new Mp3Decoder(path);
-    if (useCallBack) {
-        CallBackData *data = new CallBackData;
-        data->data = mp3Decoder;
-        data->env = env;
-        //TODO delete ref
-        data->instance =env->NewWeakGlobalRef(instance);
-        mp3Decoder->setPutBufferImpl(callback,data);
-    }
     if (mp3Decoder->checkFileOk()) {
         env->ReleaseStringUTFChars(path_, path);
        //抛出io异常
@@ -67,8 +59,16 @@ Java_com_tlinux_mp3playffmpegandaudiotrack_Mp3Decoder_nativeRelease(JNIEnv *env,
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_tlinux_mp3playffmpegandaudiotrack_Mp3Decoder_nativeStart(JNIEnv *env, jobject instance) {
+Java_com_tlinux_mp3playffmpegandaudiotrack_Mp3Decoder_nativeStart(JNIEnv *env, jobject instance,jboolean useCallBack) {
     Mp3Decoder *mp3Decoder = getNativeMp3Decoder(env,instance);
+    if (useCallBack) {
+        CallBackData *data = new CallBackData;
+        data->data = mp3Decoder;
+        data->env = env;
+        //TODO delete ref
+        data->instance =env->NewWeakGlobalRef(instance);
+        mp3Decoder->setPutBufferImpl(callback,data);
+    }
     mp3Decoder->start();
 }
 
@@ -101,6 +101,44 @@ Java_com_tlinux_mp3playffmpegandaudiotrack_MainActivity_stringFromJNI(
         jobject /* this */) {
     std::string hello = "Hello from C++";
     return env->NewStringUTF(hello.c_str());
+}
+
+
+extern "C"
+JNIEXPORT bool JNICALL
+Java_com_tlinux_mp3playffmpegandaudiotrack_Mp3Decoder_nativePrepare(
+        JNIEnv *env,
+        jobject /* this */instance) {
+    Mp3Decoder* decoder = getNativeMp3Decoder(env,instance);
+    if(!decoder->prepare()) {
+        return true;
+    }
+    return false;
+}
+
+
+extern "C"
+JNIEXPORT jobject JNICALL
+Java_com_tlinux_mp3playffmpegandaudiotrack_Mp3Decoder_ngetAudioInfo(
+        JNIEnv *env,
+        jobject /* this */instance) {
+    Mp3Decoder* decoder = getNativeMp3Decoder(env,instance);
+    jclass caudioinfo = env->FindClass("com/tlinux/mp3playffmpegandaudiotrack/AudioInfo"); //或得Student类引用
+
+    //获得得该类型的构造函数  函数名为 <init> 返回类型必须为 void 即 V
+    jmethodID constrocMID = env->GetMethodID(caudioinfo,"<init>","()V");
+
+    jobject ret = env->NewObject(caudioinfo,constrocMID);
+    jfieldID fIdRate = env->GetFieldID(caudioinfo,"sampleRate","I");
+    jfieldID fIdChannelCount = env->GetFieldID(caudioinfo,"channelCount","I");
+    jfieldID fIdFormat = env->GetFieldID(caudioinfo,"encodformat","Ljava/lang/String;");
+
+    env->SetIntField(ret,fIdRate,decoder->getSampleRate());
+    env->SetIntField(ret,fIdChannelCount,decoder->getChannelCount());
+    env->SetObjectField(ret,fIdFormat,env->NewStringUTF(decoder->getFmt()));
+
+    return ret;
+
 }
 
 //

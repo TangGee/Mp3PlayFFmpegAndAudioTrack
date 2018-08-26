@@ -29,6 +29,18 @@ public:
     }
 
 
+    int prepare();
+    int getChannelCount() const {
+        return n_channels;
+    }
+    int getSampleRate() const {
+        return sample_rate;
+    }
+
+    const char* getFmt() const{
+        return fmt;
+    }
+
 private:
     char *src_filename;
     char *errMsg;
@@ -39,7 +51,12 @@ private:
     int audio_frame_count = 0;
     void (*putBuffer)(const void* buffer,ssize_t size,ssize_t count, const void* data) = NULL;
     void* putBufferData = NULL;
+    int n_channels = 0;
+    const char *fmt;
+    int sample_rate;
 
+    int get_format_from_sample_fmt(const char **fmt,
+                               enum AVSampleFormat sample_fmt);
     void setErrorMsg(const char *msg,...);
     int open_codec_context(int *stream_idx,
                            AVCodecContext **dec_ctx, AVFormatContext *fmt_ctx, enum AVMediaType type);
